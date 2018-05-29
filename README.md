@@ -673,3 +673,243 @@ public class UserController {
 
 Client end
 ---
+
+4. 路由zuul
+
+---
+zuul start
+
+> 统一路由，可以在此处拦截，如账号密码判断、token校验等
+
+> pom
+
+```
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.tw</groupId>
+	<artifactId>zuul</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>jar</packaging>
+
+	<name>zuul</name>
+	<description>Demo project for Spring Boot</description>
+
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>2.0.2.RELEASE</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<java.version>1.8</java.version>
+		<spring-cloud.version>Finchley.BUILD-SNAPSHOT</spring-cloud.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-config-server</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-netflix-zuul</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.cloud</groupId>
+				<artifactId>spring-cloud-dependencies</artifactId>
+				<version>${spring-cloud.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
+	<repositories>
+		<repository>
+			<id>spring-snapshots</id>
+			<name>Spring Snapshots</name>
+			<url>https://repo.spring.io/snapshot</url>
+			<snapshots>
+				<enabled>true</enabled>
+			</snapshots>
+		</repository>
+		<repository>
+			<id>spring-milestones</id>
+			<name>Spring Milestones</name>
+			<url>https://repo.spring.io/milestone</url>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
+
+
+</project>
+```
+
+> application
+
+```
+server:
+  port: 8667
+
+eureka:
+  client:
+    region: xian
+    availability-zones:
+      xian: zone-1,zone-2,zone-3
+    serviceUrl:
+      zone-1: http://master:1111/eureka/
+      zone-2: http://backup1:1112/eureka/
+      zone-3: http://backup2:1113/eureka/
+
+
+spring:
+  application:
+      name: service-zuul
+
+zuul:
+  routes:
+    api-test:
+      path: /api-test/**
+      serviceId: service-test
+
+system:
+  config:
+    authFilter:
+      tokenKey: FHEIOAXaadw5455TW41xQSZ
+```
+
+> application
+
+```
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.netflix.eureka.EnableEurekaClient;
+import org.springframework.cloud.netflix.zuul.EnableZuulProxy;
+
+@EnableZuulProxy
+@EnableEurekaClient
+@SpringBootApplication
+public class ZuulApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(ZuulApplication.class, args);
+	}
+}
+```
+
+> MyFilter
+
+```
+import com.netflix.zuul.ZuulFilter;
+import com.netflix.zuul.context.RequestContext;
+import com.netflix.zuul.exception.ZuulException;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import javax.servlet.http.HttpServletRequest;
+
+/**
+ * @author Jiayajie
+ * @version 1.0
+ * @Package: com.tw.component
+ * @description: zuul过滤
+ * @date 2018-05-29 14:07
+ */
+@Component
+public class MyFilter extends ZuulFilter {
+
+    @Value("${system.config.authFilter.tokenKey}")
+    private String tokenKey;
+
+    private static Logger log = LoggerFactory.getLogger(MyFilter.class);
+
+    @Override
+    public String filterType() {
+        // pre : 路由之前, routing : 路由之时, post： 路由之后, error：发送错误调用
+        return "pre";
+    }
+
+    @Override
+    public int filterOrder() {
+        return 0;
+    }
+
+    @Override
+    public boolean shouldFilter() {
+        return true;
+    }
+
+    @Override
+    public Object run() throws ZuulException {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        HttpServletRequest request = ctx.getRequest();
+        log.info(String.format("%s >>> %s", request.getMethod(), request.getRequestURL().toString()));
+        String accessToken = request.getParameter("token");
+        if(StringUtils.isEmpty(accessToken)) {
+            log.warn("token is empty");
+            ctx.setSendZuulResponse(false);
+            ctx.setResponseStatusCode(401);
+            try {
+                ctx.getResponse().getWriter().write("token is empty");
+            }catch (Exception e){}
+
+            return null;
+        }
+        if (!tokenKey.equals(accessToken)) {
+            log.warn("token is error");
+            ctx.setSendZuulResponse(false);
+            ctx.setResponseStatusCode(401);
+            try {
+                ctx.getResponse().getWriter().write("token is error");
+            }catch (Exception e){}
+
+            return null;
+        }
+        log.info("ok");
+        return null;
+    }
+}
+```
+
+zuul end
+---
