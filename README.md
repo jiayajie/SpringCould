@@ -442,4 +442,219 @@ public class UserController {
  
  3. 服务消费者（Feign）
  > 消费者两种方式   rest+ribbon、  Feign 这里选择Feign
+ > Feign自带熔断器（Hystrix）
  
+ > pom
+ ```
+ <?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>com.tw</groupId>
+	<artifactId>test</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<packaging>jar</packaging>
+
+	<name>test</name>
+	<description>Demo project for Spring Boot</description>
+
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>2.0.2.RELEASE</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<java.version>1.8</java.version>
+		<spring-cloud.version>Finchley.BUILD-SNAPSHOT</spring-cloud.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-openfeign</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>org.springframework.cloud</groupId>
+				<artifactId>spring-cloud-dependencies</artifactId>
+				<version>${spring-cloud.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+
+	<repositories>
+		<repository>
+			<id>spring-snapshots</id>
+			<name>Spring Snapshots</name>
+			<url>https://repo.spring.io/snapshot</url>
+			<snapshots>
+				<enabled>true</enabled>
+			</snapshots>
+		</repository>
+		<repository>
+			<id>spring-milestones</id>
+			<name>Spring Milestones</name>
+			<url>https://repo.spring.io/milestone</url>
+			<snapshots>
+				<enabled>false</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
+
+
+</project>
+
+ ```
+ 
+ > application
+ 
+ ```
+ 
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.cloud.netflix.eureka.EnableEurekaClient;
+import org.springframework.cloud.openfeign.EnableFeignClients;
+
+@EnableFeignClients
+@EnableEurekaClient
+@SpringBootApplication
+public class TestApplication {
+
+	public static void main(String[] args) {
+		SpringApplication.run(TestApplication.class, args);
+	}
+}
+
+> application.yml
+
+```
+server:
+  port: 8500
+  servlet:
+      context-path: /
+
+eureka:
+  client:
+    region: xian
+    availability-zones:
+      xian: zone-1,zone-2,zone-3
+    serviceUrl:
+      zone-1: http://master:1111/eureka/
+      zone-2: http://backup1:1112/eureka/
+      zone-3: http://backup2:1113/eureka/
+feign:
+  hystrix:
+    enabled: true
+
+spring:
+  application:
+      name: service-test
+```      
+
+> service
+
+```
+import com.tw.component.SystemServiceHystrix;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.GetMapping;
+
+/**
+ * @author Jiayajie
+ * @version 1.0
+ * @Package: com.tw.service
+ * @description: 调用SystemService
+ * @date 2018-05-29 9:27
+ */
+@FeignClient(value = "service-system",fallback = SystemServiceHystrix.class)
+public interface SystemService {
+
+    @GetMapping(value = "/hello")
+    String sayHelloFromClient();
+}
+```
+
+> Hystrix
+
+*关闭提供方可测试Hystrix是否起作用*
+
+ ```
+import com.tw.service.SystemService;
+import org.springframework.stereotype.Component;
+
+/**
+ * @author Jiayajie
+ * @version 1.0
+ * @Package: com.tw.component
+ * @description: SystemService熔断器
+ * @date 2018-05-29 11:02
+ */
+@Component
+public class SystemServiceHystrix implements SystemService {
+
+    @Override
+    public String sayHelloFromClient() {
+        return "I'm sorry. There are too many visitors at present. Please try again later";
+    }
+}
+ ```
+ 
+ > controller
+ 
+ ```
+ import com.tw.service.SystemService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * @author Jiayajie
+ * @version 1.0
+ * @Package: com.tw.controller
+ * @description: 查询所有用户
+ * @date 2018-05-29 9:32
+ */
+@RestController
+public class UserController {
+
+    @Autowired
+    private SystemService systemService;
+
+    @GetMapping("/hi")
+    public String sayHello() {
+        return systemService.sayHelloFromClient();
+    }
+}
+```
